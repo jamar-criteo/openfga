@@ -34,6 +34,7 @@ import (
 	"github.com/openfga/openfga/pkg/server/test"
 	"github.com/openfga/openfga/pkg/storage"
 	"github.com/openfga/openfga/pkg/storage/memory"
+	"github.com/openfga/openfga/pkg/storage/mssql"
 	"github.com/openfga/openfga/pkg/storage/mysql"
 	"github.com/openfga/openfga/pkg/storage/postgres"
 	"github.com/openfga/openfga/pkg/storage/sqlcommon"
@@ -54,7 +55,7 @@ func init() {
 }
 
 func ExampleNewServerWithOpts() {
-	datastore := memory.New() // other supported datastores include Postgres and MySQL
+	datastore := memory.New() // other supported datastores include Postgres, MySQL & MSSQL
 	defer datastore.Close()
 
 	openfga, err := NewServerWithOpts(WithDatastore(datastore),
@@ -181,7 +182,7 @@ func TestServerPanicIfValidationsFail(t *testing.T) {
 }
 
 func TestServerNotReadyDueToDatastoreRevision(t *testing.T) {
-	engines := []string{"postgres", "mysql"}
+	engines := []string{"postgres", "mssql", "mysql"}
 
 	for _, engine := range engines {
 		t.Run(engine, func(t *testing.T) {
@@ -310,6 +311,35 @@ func TestServerWithMySQLDatastoreAndExplicitCredentials(t *testing.T) {
 
 	uri := testDatastore.GetConnectionURI(false)
 	ds, err := mysql.New(
+		uri,
+		sqlcommon.NewConfig(
+			sqlcommon.WithUsername(testDatastore.GetUsername()),
+			sqlcommon.WithPassword(testDatastore.GetPassword()),
+		),
+	)
+	require.NoError(t, err)
+	defer ds.Close()
+
+	test.RunAllTests(t, ds)
+}
+
+func TestServerWithMSSQLDatastore(t *testing.T) {
+	t.Cleanup(func() {
+		goleak.VerifyNone(t)
+	})
+	_, ds, _ := util.MustBootstrapDatastore(t, "mssql")
+
+	test.RunAllTests(t, ds)
+}
+
+func TestServerWithMSSQLDatastoreAndExplicitCredentials(t *testing.T) {
+	t.Cleanup(func() {
+		goleak.VerifyNone(t)
+	})
+	testDatastore := storagefixtures.RunDatastoreTestContainer(t, "mssql")
+
+	uri := testDatastore.GetConnectionURI(false)
+	ds, err := mssql.New(
 		uri,
 		sqlcommon.NewConfig(
 			sqlcommon.WithUsername(testDatastore.GetUsername()),
@@ -702,6 +732,16 @@ func BenchmarkOpenFGAServer(b *testing.B) {
 		ds, err := mysql.New(uri, sqlcommon.NewConfig())
 		require.NoError(b, err)
 		b.Cleanup(ds.Close)
+		test.RunAllBenchmarks(b, ds)
+	})
+
+	b.Run("BenchmarkMSSQLDatastore", func(b *testing.B) {
+		testDatastore := storagefixtures.RunDatastoreTestContainer(b, "mssql")
+
+		uri := testDatastore.GetConnectionURI(true)
+		ds, err := mssql.New(uri, sqlcommon.NewConfig())
+		require.NoError(b, err)
+		defer ds.Close()
 		test.RunAllBenchmarks(b, ds)
 	})
 }
